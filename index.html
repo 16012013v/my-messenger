@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudChat: Auth System</title>
+    <style>
+        :root { --bg: #1c1c1c; --card: #2b2b2b; --accent: #3eafec; --text: #f5f5f5; --input: #333; }
+        [data-theme="light"] { --bg: #e7ebf0; --card: #ffffff; --accent: #2481cc; --text: #333333; --input: #f0f0f0; }
+        * { box-sizing: border-box; margin: 0; padding: 0; transition: background 0.2s; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; }
+        
+        /* Auth Overlay */
+        #auth-overlay { position: fixed; inset: 0; background: var(--accent); display: flex; align-items: center; justify-content: center; z-index: 9999; }
+        .auth-card { background: var(--card); padding: 30px; border-radius: 20px; width: 340px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+        input, select, textarea { width: 100%; padding: 12px; margin: 10px 0; border-radius: 10px; border: 1px solid #444; background: var(--input); color: var(--text); outline: none; font-family: inherit; }
+        .btn { width: 100%; padding: 12px; border-radius: 10px; border: none; background: var(--accent); color: white; font-weight: bold; cursor: pointer; margin-top: 5px; }
+        .auth-toggle { margin-top: 15px; font-size: 13px; color: var(--text); opacity: 0.7; cursor: pointer; text-decoration: underline; display: block; }
+
+        /* App Structure */
+        .sidebar { width: 300px; border-right: 1px solid rgba(128,128,128,0.2); display: flex; flex-direction: column; background: var(--card); }
+        .header { padding: 15px; background: var(--accent); display: flex; justify-content: space-between; align-items: center; color: white; }
+        .chat-item { padding: 15px; border-bottom: 1px solid rgba(128,128,128,0.1); cursor: pointer; display: flex; align-items: center; gap: 10px; }
+        .chat-item.active { background: var(--accent); color: white; }
+        .main { flex: 1; display: flex; flex-direction: column; }
+        .chat-header { padding: 10px 20px; background: var(--card); border-bottom: 1px solid rgba(128,128,128,0.1); display: flex; justify-content: space-between; align-items: center; min-height: 65px; }
+        #msgs { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+        .msg { padding: 10px 15px; border-radius: 15px; background: var(--card); max-width: 70%; border: 1px solid rgba(128,128,128,0.1); word-wrap: break-word; }
+        .sent { align-self: flex-end; background: var(--accent); color: white; border: none; }
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); align-items: center; justify-content: center; z-index: 1000; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+<div id="auth-overlay">
+    <div class="auth-card">
+        <h2 id="auth-title">Create Account</h2>
+        <input type="text" id="loginId" placeholder="Phone or Nickname">
+        <button class="btn" id="auth-btn" onclick="processAuth()">Register</button>
+        <span class="auth-toggle" id="auth-switch" onclick="toggleAuthMode()">Already have an account? Login</span>
+    </div>
+</div>
+
+<div class="sidebar">
+    <div class="header">
+        <b id="uName">@User</b>
+        <button onclick="openSet()" style="background:none; border:none; color:white; font-size:20px; cursor:pointer;">⚙️</button>
+    </div>
+    <div id="cList" style="overflow-y: auto; flex: 1;"></div>
+</div>
+
+<div class="main">
+    <div class="chat-header">
+        <div>
+            <b id="currentChatTitle">Select a chat</b><br>
+            <small id="currentChatDesc" style="opacity: 0.6; font-size: 11px;"></small>
+        </div>
+        <button id="editBtn" class="hidden" onclick="openEditGroup()" style="background:none; border:1px solid var(--accent); color:var(--accent); padding:5px 10px; border-radius:5px; cursor:pointer;">Edit Info</button>
+    </div>
+    <div id="msgs"></div>
+    <div id="inputArea" class="hidden" style="padding:15px; display:flex; gap:10px; background: var(--card);">
+        <input type="text" id="mIn" placeholder="Write message..." onkeypress="if(event.key==='Enter') sendMsg()">
+        <button class="btn" onclick="sendMsg()" style="width:60px; margin:0">➤</button>
+    </div>
+</div>
+
+<div id="setModal" class="modal" onclick="if(event.target==this) this.style.display='none'">
+    <div class="auth-card">
+        <h3>Settings</h3>
+        <button class="btn" onclick="addContact()" style="background:#007bff;">👤 Add Contact</button>
+        <button class="btn" onclick="createGroup()" style="background:#28a745;">👥 New Group</button>
+        <hr style="margin: 15px 0; opacity: 0.2;">
+        <button class="btn" onclick="copyLink()" style="background:#6c757d;">🔗 Copy My Link</button>
+        <button class="btn" onclick="logout()" style="background:#ff4d4d; margin-top:10px;">Logout</button>
+    </div>
+</div>
+
+<div id="editGroupModal" class="modal" onclick="if(event.target==this) this.style.display='none'">
+    <div class="auth-card">
+        <h3>Edit Chat</h3>
+        <input type="text" id="editNameField">
+        <textarea id="editDescField" rows="3"></textarea>
+        <button class="btn" onclick="saveChatChanges()">Save Changes</button>
+        <button class="btn" onclick="deleteChat()" style="background:#ff4d4d; margin-top:10px;">Delete Chat</button>
+    </div>
+</div>
+
+<script>
+    let isLoginMode = false; // Режим за замовчуванням - Реєстрація
+    let activeUser = new URLSearchParams(window.location.search).get('user');
+    let activeChatId = null;
+    let db = JSON.parse(localStorage.getItem('cloud_messenger_db') || "{}");
+
+    window.onload = () => {
+        if (activeUser && db[activeUser]) {
+            initApp();
+        } else if (activeUser && !db[activeUser]) {
+            // Якщо в URL є юзер, якого немає в базі - скидаємо на вхід
+            window.location.search = "";
+        }
+    };
+
+    function toggleAuthMode() {
+        isLoginMode = !isLoginMode;
+        const title = document.getElementById('auth-title');
+        const btn = document.getElementById('auth-btn');
+        const toggle = document.getElementById('auth-switch');
+
+        if (isLoginMode) {
+            title.innerText = "Login";
+            btn.innerText = "Enter Cloud";
+            toggle.innerText = "Don't have an account? Register";
+        } else {
+            title.innerText = "Create Account";
+            btn.innerText = "Register";
+            toggle.innerText = "Already have an account? Login";
+        }
+    }
+
+    function processAuth() {
+        const id = document.getElementById('loginId').value.trim().toLowerCase();
+        if (!id) return alert("Please enter ID");
+
+        if (isLoginMode) {
+            // ЛОГІКА ВХОДУ
+            if (db[id]) {
+                window.location.search = `?user=${id}`;
+            } else {
+                alert("User not found! Please register first.");
+            }
+        } else {
+            // ЛОГІКА РЕЄСТРАЦІЇ
+            if (db[id]) {
+                alert("This ID is already taken. Try another or Login.");
+            } else {
+                db[id] = { nick: id, chats: [], history: {} };
+                saveDB();
+                window.location.search = `?user=${id}`;
+            }
+        }
+    }
+
+    function initApp() {
+        document.getElementById('auth-overlay').style.display = 'none';
+        document.getElementById('uName').innerText = "@" + db[activeUser].nick;
+        renderSidebar();
+    }
+
+    function saveDB() {
+        localStorage.setItem('cloud_messenger_db', JSON.stringify(db));
+    }
+
+    function renderSidebar() {
+        const list = document.getElementById('cList');
+        list.innerHTML = "";
+        db[activeUser].chats.forEach(c => {
+            const div = document.createElement('div');
+            div.className = `chat-item ${activeChatId === c.id ? 'active' : ''}`;
+            div.innerHTML = `<span>${c.type==='group'?'👥':'👤'}</span> <b>${c.name}</b>`;
+            div.onclick = () => selectChat(c.id);
+            list.appendChild(div);
+        });
+    }
+
+    function selectChat(id) {
+        activeChatId = id;
+        const c = db[activeUser].chats.find(x => x.id === id);
+        if(!c) return;
+        document.getElementById('currentChatTitle').innerText = c.name;
+        document.getElementById('currentChatDesc').innerText = c.desc || "";
+        document.getElementById('editBtn').classList.remove('hidden');
+        document.getElementById('inputArea').classList.remove('hidden');
+        loadMessages();
+        renderSidebar();
+    }
+
+    function loadMessages() {
+        const msgs = document.getElementById('msgs');
+        msgs.innerHTML = "";
+        const hist = db[activeUser].history[activeChatId] || [];
+        hist.forEach(m => {
+            const d = document.createElement('div');
+            d.className = 'msg ' + (m.type === 'sent' ? 'sent' : '');
+            d.innerText = m.text;
+            msgs.appendChild(d);
+        });
+        msgs.scrollTop = msgs.scrollHeight;
+    }
+
+    function sendMsg() {
+        const i = document.getElementById('mIn');
+        if (!i.value.trim()) return;
+        if (!db[activeUser].history[activeChatId]) db[activeUser].history[activeChatId] = [];
+        db[activeUser].history[activeChatId].push({ text: i.value, type: 'sent' });
+        saveDB();
+        loadMessages();
+        i.value = "";
+    }
+
+    function createChat(name, type) {
+        const newChat = { id: 'c_' + Date.now(), name, type, desc: type === 'group' ? "Group chat" : "Private" };
+        db[activeUser].chats.push(newChat);
+        saveDB();
+        renderSidebar();
+        document.getElementById('setModal').style.display = 'none';
+        selectChat(newChat.id);
+    }
+
+    function addContact() { let n = prompt("Name:"); if(n) createChat(n, 'private'); }
+    function createGroup() { let n = prompt("Group name:"); if(n) createChat(n, 'group'); }
+
+    function openEditGroup() {
+        const c = db[activeUser].chats.find(x => x.id === activeChatId);
+        document.getElementById('editGroupModal').style.display = 'flex';
+        document.getElementById('editNameField').value = c.name;
+        document.getElementById('editDescField').value = c.desc || "";
+    }
+
+    function saveChatChanges() {
+        const cIdx = db[activeUser].chats.findIndex(x => x.id === activeChatId);
+        db[activeUser].chats[cIdx].name = document.getElementById('editNameField').value;
+        db[activeUser].chats[cIdx].desc = document.getElementById('editDescField').value;
+        saveDB();
+        selectChat(activeChatId);
+        document.getElementById('editGroupModal').style.display = 'none';
+    }
+
+    function deleteChat() {
+        if(confirm("Delete?")) {
+            db[activeUser].chats = db[activeUser].chats.filter(x => x.id !== activeChatId);
+            saveDB();
+            location.reload();
+        }
+    }
+
+    function copyLink() {
+        navigator.clipboard.writeText(window.location.href).then(() => alert("Copied!"));
+    }
+
+    function openSet() { document.getElementById('setModal').style.display = 'flex'; }
+    function logout() { window.location.href = window.location.pathname; }
+</script>
+</body>
+</html>
